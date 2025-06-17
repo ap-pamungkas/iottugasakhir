@@ -1,126 +1,117 @@
 #include <SPI.h>
 #include <LoRa.h>
-#include <SoftwareSerial.h>
 #include <TinyGPS++.h>
-#include <Adafruit_BMP280.h>
-#include <Adafruit_Sensor.h>
+#include <SoftwareSerial.h>
+#include <Wire.h>
+#include <Adafruit_BMP280.h>  // Library BMP280
 
-// ========================== PIN CONFIG ==========================
+// Konfigurasi pin LoRa SX1278
 #define LORA_SS   15  // D8
 #define LORA_RST  16  // D0
 #define LORA_DIO0 5   // D1
 
-#define MQ135_PIN A0 // analog pin
+// Konfigurasi pin GPS (GPS TX ke pin ini)
+#define GPS_RX 4      // D2 (GPIO4) - Aman untuk SoftwareSerial RX
+#define GPS_TX -1     // Tidak digunakan, karena GPS hanya TX
 
-#define GPS_RX_PIN 0  // D3 - GPS TX ke sini
-#define GPS_TX_PIN 2  // D4 - optional
+// Konfigurasi pin Sensor MQ135
+#define MQ135_PIN A0
 
-Adafruit_BMP280 bmp;
-SoftwareSerial gpsSerial(GPS_RX_PIN, GPS_TX_PIN);
 TinyGPSPlus gps;
+SoftwareSerial gpsSerial(GPS_RX, GPS_TX);  // RX, TX (-1 artinya tidak dipakai)
+Adafruit_BMP280 bmp;  // Inisialisasi BMP280
 
-float bmp_temp = 0.0;
-int mq135_value = 0;
-int counter = 0;
+unsigned long lastPrint = 0;
+unsigned long lastLoRaSend = 0;
+const long LORA_SEND_INTERVAL = 10000; // Kirim data LoRa setiap 10 detik
 
-double latitude = 0.0;
-double longitude = 0.0;
-double altitude = 0.0;
-int satellites = 0;
-String gpsTime = "";
-String gpsDate = "";
-bool gpsValid = false;
-
-// ========================== SETUP ==========================
 void setup() {
+  delay(1000);  // Tunggu boot selesai
   Serial.begin(115200);
-  gpsSerial.begin(9600);
-  delay(100);
+  gpsSerial.begin(9600);  // Baud rate untuk NEO-6M
 
-  Serial.println("=== ESP8266 Transmitter ===");
+  // Inisialisasi I2C (gunakan GPIO0 dan GPIO2)
+  Wire.begin(0, 2); // SDA = GPIO0 (D3), SCL = GPIO2 (D4)
 
-  // BMP280
+  // Inisialisasi BMP280
   if (!bmp.begin(0x76)) {
-    Serial.println("BMP280 gagal!");
+    Serial.println("Gagal mendeteksi BMP280!");
   } else {
-    Serial.println("BMP280 siap.");
+    Serial.println("BMP280 siap!");
   }
 
-  // LoRa
+  // Inisialisasi LoRa
   LoRa.setPins(LORA_SS, LORA_RST, LORA_DIO0);
   if (!LoRa.begin(433E6)) {
-    Serial.println("LoRa gagal mulai!");
+    Serial.println("LoRa init gagal!");
     while (1);
   }
-
-  LoRa.setSpreadingFactor(7);
-  LoRa.setSignalBandwidth(125E3);
-  LoRa.setCodingRate4(5);
-  LoRa.setTxPower(20);
-  Serial.println("LoRa siap kirim!");
+  Serial.println("LoRa siap!");
 }
 
-// ========================== LOOP ==========================
 void loop() {
-  bacaGPS();
-  kirimData();
-  delay(10000); // kirim tiap 10 detik
-}
-
-// ========================== GPS ==========================
-void bacaGPS() {
+  // Membaca data GPS secara terus-menerus
   while (gpsSerial.available() > 0) {
-    char c = gpsSerial.read();
-    gps.encode(c);
+    gps.encode(gpsSerial.read());
+  }
 
-    if (gps.location.isValid()) {
-      gpsValid = true;
-      latitude = gps.location.lat();
-      longitude = gps.location.lng();
+  // Setiap 5 detik tampilkan status sinyal GPS dan nilai sensor
+  if (millis() - lastPrint > 5000) {
+    if (!gps.location.isValid()) {
+      Serial.println("GPS belum valid! Menunggu sinyal...");
     } else {
-      gpsValid = false;
+      Serial.print("Satelit: ");
+      Serial.print(gps.satellites.value());
+      Serial.print(" | HDOP: ");
+      Serial.print(gps.hdop.hdop());
     }
 
-    if (gps.altitude.isValid()) {
-      altitude = gps.altitude.meters();
+    // Baca nilai sensor MQ135
+    int mq135Value = analogRead(MQ135_PIN);
+    Serial.print(" | MQ135 (ADC): ");
+    Serial.print(mq135Value);
+
+    // Baca suhu dan tekanan dari BMP280
+    float temperature = bmp.readTemperature();
+    float pressure = bmp.readPressure() / 100.0F;
+
+    Serial.print(" | Suhu: ");
+    Serial.print(temperature);
+    Serial.print(" C | Tekanan: ");
+    Serial.print(pressure);
+    Serial.println(" hPa");
+
+    lastPrint = millis();
+  }
+
+  // Kirim data melalui LoRa secara berkala
+  if (gps.location.isUpdated() || (millis() - lastLoRaSend > LORA_SEND_INTERVAL)) {
+    String data;
+    if (gps.location.isValid()) {
+      data = "Lat: " + String(gps.location.lat(), 6) +
+             ", Lon: " + String(gps.location.lng(), 6);
+    } else {
+      data = "Lat: INVALID, Lon: INVALID";
     }
 
-    if (gps.satellites.isValid()) {
-      satellites = gps.satellites.value();
-    }
+    // Tambahkan data sensor
+    int mq135Value = analogRead(MQ135_PIN);
+    float temperature = bmp.readTemperature();
+    float pressure = bmp.readPressure() / 100.0F;
 
-    if (gps.time.isValid()) {
-      gpsTime = String(gps.time.hour()) + ":" +
-                String(gps.time.minute()) + ":" +
-                String(gps.time.second());
-    }
+    data += ", MQ135: " + String(mq135Value);
+    data += ", Suhu: " + String(temperature, 2) + " C";
+    data += ", Tekanan: " + String(pressure, 2) + " hPa";
 
-    if (gps.date.isValid()) {
-      gpsDate = String(gps.date.day()) + "/" +
-                String(gps.date.month()) + "/" +
-                String(gps.date.year());
-    }
+    sendLoRa(data);
+    Serial.print("Terkirim via LoRa: ");
+    Serial.println(data);
+    lastLoRaSend = millis();
   }
 }
 
-// ========================== KIRIM DATA ==========================
-void kirimData() {
-  mq135_value = analogRead(MQ135_PIN);
-  bmp_temp = bmp.readTemperature();
-  if (isnan(bmp_temp)) bmp_temp = 0.0;
-
-  String json = "{";
-  json += "\"no_seri\":\"SN-PRK-002\",";
-  json += "\"latitude\":" + String(gpsValid ? latitude : 0.0, 6) + ",";
-  json += "\"longitude\":" + String(gpsValid ? longitude : 0.0, 6) + ",";
-  json += "\"suhu\":" + String(bmp_temp, 2) + ",";
-  json += "\"kualitas_udara\":" + String(mq135_value);
-  json += "}";
-
-  Serial.println("Mengirim data:");
-  Serial.println(json);
-
+void sendLoRa(String message) {
   LoRa.beginPacket();
-  LoRa.print(json);
+  LoRa.print(message);
   LoRa.endPacket();
 }
