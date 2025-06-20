@@ -5,7 +5,7 @@
 #include <Wire.h>
 #include <Adafruit_BMP280.h>
 
-// ======================== PIN KONFIGURASI ========================
+// ======================== KONFIGURASI ========================
 // LoRa SX1278
 #define LORA_SS   15  // D8
 #define LORA_RST  16  // D0
@@ -13,7 +13,7 @@
 
 // GPS (TX GPS ke RX ESP8266)
 #define GPS_RX 4     // D2 (GPIO4)
-#define GPS_TX -1    // tidak digunakan
+#define GPS_TX -1    // Tidak digunakan
 
 // Sensor
 #define MQ135_PIN A0
@@ -21,33 +21,34 @@
 // Tombol Darurat (aktif LOW, menggunakan GPIO3 / RX)
 #define BUTTON_PIN 3
 
-// ================================================================
+// Nomor seri perangkat
+const String NO_SERI = "SN-PRK-001";
+
+// ============================================================
 
 TinyGPSPlus gps;
-SoftwareSerial gpsSerial(GPS_RX, GPS_TX); // RX, TX (-1 tidak digunakan)
+SoftwareSerial gpsSerial(GPS_RX, GPS_TX);
 Adafruit_BMP280 bmp;
 
 unsigned long lastPrint = 0;
 unsigned long lastLoRaSend = 0;
-const long LORA_SEND_INTERVAL = 10000;
+const long LORA_SEND_INTERVAL = 3000;
 
 void setup() {
   delay(1000);
   Serial.begin(115200);
-  gpsSerial.begin(9600);  // Baud rate GPS NEO-6M
+  gpsSerial.begin(9600);
 
-  Wire.begin(0, 2); // I2C SDA = GPIO0 (D3), SCL = GPIO2 (D4)
+  Wire.begin(0, 2); // SDA = GPIO0 (D3), SCL = GPIO2 (D4)
 
   pinMode(BUTTON_PIN, INPUT_PULLUP); // Tombol darurat
 
-  // Inisialisasi BMP280
   if (!bmp.begin(0x76)) {
     Serial.println("Gagal mendeteksi BMP280!");
   } else {
     Serial.println("BMP280 siap!");
   }
 
-  // Inisialisasi LoRa
   LoRa.setPins(LORA_SS, LORA_RST, LORA_DIO0);
   if (!LoRa.begin(433E6)) {
     Serial.println("LoRa init gagal!");
@@ -57,27 +58,23 @@ void setup() {
 }
 
 void loop() {
-  // Baca data GPS
   while (gpsSerial.available() > 0) {
     gps.encode(gpsSerial.read());
   }
 
-  // Tampilkan info setiap 5 detik
   if (millis() - lastPrint > 5000) {
     tampilkanStatus();
     lastPrint = millis();
   }
 
-  // Kirim data biasa tiap interval
   if (gps.location.isUpdated() || (millis() - lastLoRaSend > LORA_SEND_INTERVAL)) {
     kirimDataBiasa();
     lastLoRaSend = millis();
   }
 
-  // Cek tombol darurat
   if (digitalRead(BUTTON_PIN) == LOW) {
     kirimDarurat();
-    delay(3000);  // Hindari pengiriman berulang
+    delay(3000); // Debounce tombol darurat
   }
 }
 
@@ -105,13 +102,13 @@ void tampilkanStatus() {
 }
 
 void kirimDataBiasa() {
-  String data;
+  String data = "[ID:" + NO_SERI + "] ";
 
   if (gps.location.isValid()) {
-    data = "Lat: " + String(gps.location.lat(), 6) +
-           ", Lon: " + String(gps.location.lng(), 6);
+    data += "Lat: " + String(gps.location.lat(), 6) +
+            ", Lon: " + String(gps.location.lng(), 6);
   } else {
-    data = "Lat: INVALID, Lon: INVALID";
+    data += "Lat: INVALID, Lon: INVALID";
   }
 
   int mq135Value = analogRead(MQ135_PIN);
@@ -128,7 +125,7 @@ void kirimDataBiasa() {
 }
 
 void kirimDarurat() {
-  String pesan = "[DARURAT] ";
+  String pesan = "[DARURAT][ID:" + NO_SERI + "] ";
 
   if (gps.location.isValid()) {
     pesan += "Lokasi: " + String(gps.location.lat(), 6) + "," + String(gps.location.lng(), 6);
