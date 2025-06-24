@@ -13,7 +13,7 @@ const char *ssid = "Bujai";
 const char *password = "qwertyui";
 
 // Pastikan endpoint API mengarah langsung ke route yang menerima POST, bukan yang redirect
-const String API_URL = "http://192.168.138.198/sigap-io_v_0.2/api/insiden-log";
+const String API_URL = "http://192.168.146.198/sigap-io_v_0.2/api/insiden-log";
 // ==========================================================
 
 void setup() {
@@ -107,8 +107,9 @@ bool parseData(String data, String &noSeri, float &lat, float &lon, float &suhu,
     suhu = data.substring(suhuIndex + 6, data.indexOf("C", suhuIndex)).toFloat();
 
     // Cek NaN
-    if (isnan(lat)) lat = -1.1010101;
-    if (isnan(lon)) lon = 9.28228282;
+   if (isnan(lat)) lat =NULL;     // Koordinat Ketapang
+   if (isnan(lon)) lon =NULL;
+  
     if (isnan(suhu)) suhu = 0.0;
 
     return true;
@@ -142,7 +143,7 @@ void kirimKeAPI(String noSeri, float lat, float lon, float suhu, int kualitas, b
     payload += "\"longitude\":" + String(lon, 6) + ",";
     payload += "\"suhu\":" + String(suhu, 2) + ",";
     payload += "\"kualitas_udara\":" + String(kualitas) + ",";
-    payload += "\"darurat\":" + String(darurat ? "true" : "false");
+    payload += "\"darurat\":" + String(darurat ? 1 : 0);
     payload += "}";
 
     Serial.println("Payload:");
